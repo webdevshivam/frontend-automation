@@ -1,0 +1,25 @@
+NDI     : 019e8947-5c82-74e8-a1c0-419801cc8538
+Started : 2026-06-05 22:06:06
+
+
+──────────────────────────────────────────────────────────────────────
+▶  Step 1 — Landing page
+──────────────────────────────────────────────────────────────────────
+   … Opening billing URL (attempt 1/3)...
+   … Loaded: https://patients-billing-env-staging-clarity-rcm.vercel.app/lone%20pine%20derm/019e8947-5c82-74e8-a1c0-419801cc8538
+   … Waiting for loading indicator to disappear...
+   ✗  Billing link reachable — NDI '019e8947-5c82-74e8-a1c0-419801cc8538' is unreachable — the portal returned "We couldn't process this link". Check that the NDI is correct.
+
+══════════════════════════════════════════════════════════════════════
+  ELEMENT CHECK SUMMARY
+══════════════════════════════════════════════════════════════════════
+
+  [Navigation]
+    ✗  Billing link reachable
+       ↳ NDI '019e8947-5c82-74e8-a1c0-419801cc8538' is unreachable — the portal returned "We couldn't process this link". Check that the NDI is correct.
+
+  Passed : 0  |  Failed : 1  |  Total : 1
+══════════════════════════════════════════════════════════════════════
+
+RESULT: UNREACHABLE — could not reach this NDI
+Finished: 2026-06-05 22:06:16

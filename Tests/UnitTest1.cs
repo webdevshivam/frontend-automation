@@ -10,8 +10,16 @@ public class UnitTest1
 {
 
     
-    private const string BillingUrl =
-        "https://patients-billing-env-staging-clarity-rcm.vercel.app/lone%20pine%20derm/019e8947-5c82-74e8-a1c0-419801cc8538";
+    private const string BillingBaseUrl =
+        "https://patients-billing-env-staging-clarity-rcm.vercel.app/BaseDermatology/";
+ 
+    private const string DefaultNdi = "019e8947-5c82-74e8-a1c0-419801cc8538";
+
+    // NDI currently under test (overridable via RunAllTestsAsync).
+    private string _ndi = DefaultNdi;
+
+    // Full billing URL built from the configured NDI.
+    private string BillingUrl => BillingBaseUrl + _ndi;
 
     private const int DefaultTimeoutMs = 45_000;
     private const int StripeReadyTimeoutMs = 90_000;
@@ -30,6 +38,12 @@ public class UnitTest1
     private string _currentStep = "Setup";
     private readonly List<(string Step, string Check, bool Passed, string Detail)> _checkResults = new();
     private readonly List<string> _imageFailures = new();
+
+    private TextWriter? _originalOut;
+    private StreamWriter? _logWriter;
+    private bool _unreachable;
+
+    public string LogFilePath { get; private set; } = "";
 
     // ── Locators (stable selectors) ───────────────────────────────────────────
 
@@ -63,12 +77,37 @@ public class UnitTest1
     private ILocator VerifyIdentityHeading =>
         _page.GetByRole(AriaRole.Heading, new() { Name = "Verify your identity" });
 
+    /// <summary>
+    /// Runs the ENTIRE billing flow for a given NDI (the unique bill id in the URL path) as a
+    /// plain object call — e.g. <c>await new UnitTest1().RunAllTestsAsync(ndi)</c>.
+    /// Drives SetUp → MainFlow → TearDown manually so it can be used outside the NUnit runner.
+    /// </summary>
+    /// <param name="ndi">The bill identifier, e.g. "019e8947-5c82-74e8-a1c0-419801cc8538".</param>
+    public async Task RunAllTestsAsync(string ndi)
+    {
+        if (!string.IsNullOrWhiteSpace(ndi))
+            _ndi = ndi.Trim();
+
+        try
+        {
+            await SetUp();
+            await MainFlow_VerifiesElementsValidationAndNavigation();
+        }
+        finally
+        {
+            await TearDown();
+        }
+    }
+
     [SetUp]
     public async Task SetUp()
     {
         _checkResults.Clear();
         _imageFailures.Clear();
         _currentStep = "Setup";
+        _unreachable = false;
+
+        StartLogging();
 
         _playwright = await Playwright.CreateAsync();
         _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
@@ -84,10 +123,55 @@ public class UnitTest1
     public async Task TearDown()
     {
         PrintCheckSummary();
+        PrintResultLine();
 
         try { await _context?.CloseAsync()!; } catch { /* ignore */ }
         try { await _browser?.CloseAsync()!; } catch { /* ignore */ }
         _playwright?.Dispose();
+
+        StopLogging();
+    }
+
+    private void StartLogging()
+    {
+        var shortNdi = string.IsNullOrWhiteSpace(_ndi) ? "default" : _ndi.Split('-')[0];
+        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", ".."));
+        var runFolder = Path.Combine(projectRoot, "logs", $"{shortNdi}_{stamp}");
+        Directory.CreateDirectory(runFolder);
+        LogFilePath = Path.Combine(runFolder, "result.txt");
+
+        _originalOut = Console.Out;
+        _logWriter = new StreamWriter(LogFilePath, append: false) { AutoFlush = true };
+        Console.SetOut(new TeeTextWriter(_originalOut, _logWriter));
+
+        Console.WriteLine($"NDI     : {_ndi}");
+        Console.WriteLine($"Started : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine();
+    }
+
+    private void StopLogging()
+    {
+        if (_logWriter == null) return;
+
+        Console.Out.Flush();
+        if (_originalOut != null)
+            Console.SetOut(_originalOut);
+
+        _logWriter.Dispose();
+        _logWriter = null;
+    }
+
+    private void PrintResultLine()
+    {
+        var failed = _checkResults.Count(r => !r.Passed);
+        var result = _unreachable
+            ? "UNREACHABLE — could not reach this NDI"
+            : failed > 0 ? "FAILED" : "PASSED";
+
+        Console.WriteLine();
+        Console.WriteLine($"RESULT: {result}");
+        Console.WriteLine($"Finished: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
     }
 
     private async Task CreateFreshContextAndPageAsync()
@@ -187,6 +271,18 @@ public class UnitTest1
 
                 LogInfo($"Loaded: {_page.Url}");
                 await WaitForAppLoadingToFinishAsync();
+
+                // The portal shows "We couldn't process this link" when the NDI is invalid/unreachable.
+                // Retrying won't help, so fail fast with a clear message.
+                if (await IsUnprocessableLinkPageAsync())
+                {
+                    var msg = $"NDI '{_ndi}' is unreachable — the portal returned " +
+                              "\"We couldn't process this link\". Check that the NDI is correct.";
+                    _unreachable = true;
+                    RecordFail("Navigation", "Billing link reachable", msg);
+                    throw new BillingLinkUnreachableException(msg);
+                }
+
                 await LandingHeading.WaitForAsync(new()
                 {
                     State = WaitForSelectorState.Visible,
@@ -202,6 +298,10 @@ public class UnitTest1
                 RecordPass("Navigation", "Landing page opened and Pay now is visible");
                 return;
             }
+            catch (BillingLinkUnreachableException)
+            {
+                throw; // invalid link — do not retry
+            }
             catch (Exception ex)
             {
                 lastError = ex;
@@ -211,6 +311,23 @@ public class UnitTest1
         }
 
         throw new InvalidOperationException("Could not open landing page after 3 attempts.", lastError);
+    }
+
+    /// <summary>
+    /// Detects the portal's "We couldn't process this link" error page, which appears
+    /// when the NDI (bill id) is invalid or cannot be reached.
+    /// </summary>
+    private async Task<bool> IsUnprocessableLinkPageAsync()
+    {
+        try
+        {
+            var errorHeading = _page.GetByText("We couldn't process this link");
+            return await errorHeading.IsVisibleAsync();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task WaitForAppLoadingToFinishAsync()
@@ -275,9 +392,9 @@ public class UnitTest1
 
         LogInfo($"Clicking: {actionName}");
         var urlBefore = _page.Url;
-        // #region agent log
+        
         DbgLog("C", "ClickAndWaitAsync:preClick", $"About to click {actionName}", new { url = urlBefore, urlFragment, urlShouldContain, runId = "post-fix2" });
-        // #endregion
+
 
         if (!string.IsNullOrEmpty(urlFragment))
         {
@@ -788,7 +905,8 @@ public class UnitTest1
                 catch { /* try next path */ }
             }
         }
-        catch { /* ignore logging failures */ }
+        catch { 
+        }
     }
     // #endregion
 
@@ -844,4 +962,13 @@ public class UnitTest1
         Console.ResetColor();
         Console.WriteLine(new string('═', 70));
     }
+}
+
+/// <summary>
+/// Thrown when the billing portal cannot reach/process the given NDI
+/// (the "We couldn't process this link" error page).
+/// </summary>
+public class BillingLinkUnreachableException : Exception
+{
+    public BillingLinkUnreachableException(string message) : base(message) { }
 }

@@ -525,3 +525,4 @@ D:\Frontend Automation\PlaywrightPrototype\PlaywrightPrototype\obj\Debug\net10.0
 D:\Frontend Automation\PlaywrightPrototype\PlaywrightPrototype\obj\Debug\net10.0\PlaywrightPrototype.pdb
 D:\Frontend Automation\PlaywrightPrototype\PlaywrightPrototype\obj\Debug\net10.0\PlaywrightPrototype.genruntimeconfig.cache
 D:\Frontend Automation\PlaywrightPrototype\PlaywrightPrototype\obj\Debug\net10.0\ref\PlaywrightPrototype.dll
+D:\Frontend Automation\PlaywrightPrototype\PlaywrightPrototype\obj\Debug\net10.0\PlaywrightPrototype.sourcelink.json

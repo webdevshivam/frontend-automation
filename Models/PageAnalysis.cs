@@ -33,6 +33,9 @@ namespace PlaywrightPrototype.models
         public ElementTarget Target { get; set; } = new();
     }
 
+    
+
+
     public class ImageInfo
     {
         public string Src { get; set; } = "";
@@ -41,6 +44,9 @@ namespace PlaywrightPrototype.models
         public bool IsLoaded { get; set; }
         public ElementTarget Target { get; set; } = new();
     }
+
+
+
 
     public class LinkInfo
     {
